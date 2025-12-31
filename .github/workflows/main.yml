@@ -1,45 +1,52 @@
-name: Windows RDP via Cloudflare Tunnel
+name: Ubuntu Desktop with noVNC and Tunnel
 
 on:
   workflow_dispatch:
 
 jobs:
-  rdp:
-    runs-on: windows-latest
-    timeout-minutes: 360
+  run-desktop:
+    runs-on: ubuntu-latest
 
     steps:
-    - name: Enable RDP
+    - name: Install dependencies
       run: |
-        Set-ItemProperty -Path "HKLM:\System\CurrentControlSet\Control\Terminal Server" -Name "fDenyTSConnections" -Value 0
-        Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
+        sudo apt update
+        sudo apt install -y xfce4 xfce4-goodies tightvncserver git curl wget openssh-client
+        sudo apt install -y python3 python3-pip
+        pip3 install websockify
 
-    - name: Create RDP User
+    - name: Setup VNC server and noVNC
       run: |
-        net user kamel007 kamel007 /add
-        net localgroup administrators kamel007 /add
+        mkdir -p ~/.vnc
+        echo "123456" | vncpasswd -f > ~/.vnc/passwd
+        chmod 600 ~/.vnc/passwd
 
-    - name: Download cloudflared
+        echo '#!/bin/bash
+        xrdb $HOME/.Xresources
+        startxfce4 &' > ~/.vnc/xstartup
+        chmod +x ~/.vnc/xstartup
+
+        vncserver :1 -geometry 1280x720 -depth 24
+        vncserver -kill :1
+        vncserver :1 -geometry 1280x720 -depth 24
+
+        git clone https://github.com/novnc/noVNC.git ~/noVNC
+        git clone https://github.com/novnc/websockify.git ~/noVNC/utils/websockify
+
+    - name: Run noVNC server
       run: |
-        Invoke-WebRequest `
-          -Uri "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-windows-amd64.exe" `
-          -OutFile cloudflared.exe
+        nohup ~/noVNC/utils/launch.sh --vnc localhost:5901 --listen 6080 &
 
-    - name: Start Cloudflare Tunnel
-      env:
-        CLOUDFLARE_TUNNEL_TOKEN: ${{ secrets.cloudflared.exe service install eyJhIjoiYWIzOTUwOTUwZWNkY2ExOTRiYzcyYWRiZTYyOTdlZDUiLCJ0IjoiYjJkNDY0YzUtNTY3OC00NWRiLWI4NjItYTU1MDgyNzViMzAyIiwicyI6IllXUmtPRFJoTXpjdE9XTm1PQzAwTmpZM0xUaGtaRE10T1RZeFlUTTRaVGd3WWpkaiJ9 }}
+    - name: Create tunnel with serveo.net
       run: |
-        Start-Process -NoNewWindow -FilePath ".\cloudflared.exe" `
-          -ArgumentList "tunnel run" `
-          -RedirectStandardOutput tunnel.log
+        nohup ssh -o StrictHostKeyChecking=no -R 80:localhost:6080 serveo.net &
+        sleep 10
+        echo "🚀 Tunnel should be up! Check logs below for the public URL."
+        ps aux | grep ssh
 
-    - name: Show RDP Info
+    - name: Show connection info
       run: |
-        Write-Output "================================"
-        Write-Output "RDP USER: kamel007"
-        Write-Output "RDP PASS: kamel007"
-        Write-Output "PORT: 3389"
-        Write-Output "Use your Cloudflare TCP hostname"
-        Write-Output "================================"
-
-        while ($true) { Start-Sleep -Seconds 300 }
+        echo "-------------------------------------------"
+        echo "🔑 VNC password: 123456"
+        echo "🌐 Open the public URL from the previous step in your browser"
+        echo "-------------------------------------------"
